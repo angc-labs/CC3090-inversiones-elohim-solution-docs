@@ -35,6 +35,7 @@ const sidebars: SidebarsConfig = {
       collapsed: true,
       items: [
         'faq',
+        'calculo-costos',
         'contacto',
       ],
     },
