@@ -200,7 +200,7 @@ El empleado recibirá un email para activar su cuenta.
 
 ## Próximo Paso
 
-[Aprende a Utilizar el tablero Kanban](../features/tableroKanban.md)
+[Aprende a Utilizar el tablero Kanban](/docs/features/tablerokanban)
 
 ---
 
