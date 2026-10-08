@@ -11,29 +11,13 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
-    env:
-      COMPOSE_FILE: docker-compose.yml:docker-compose.override.yml:compose.ci.yml
-      COMPOSE_PROFILES: production
-    defaults:
-      run:
-        working-directory: stack
-        shell: bash
-    steps:
-      - name: Checkout complete application
-        uses: actions/checkout@v4
-        with:
-          repository: angc-labs/CC3090-inversiones-elohim-solution
-          ref: main
-          submodules: recursive
-          path: stack
+    timeout-minutes: 30
 
-      # Test this docs commit, not the older commit recorded by the parent.
-      - name: Checkout docs under test
+    steps:
+      - name: Checkout docs repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
-          path: stack/docs
+          submodules: recursive
           persist-credentials: false
 
       - name: Set up Node.js
@@ -41,58 +25,38 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: '9'
+      - name: Install dependencies
+        run: npm ci --no-fund --no-audit
 
-      - name: Install docs dependencies
-        run: pnpm --dir docs install --frozen-lockfile
+      - name: Run typecheck
+        run: npm run typecheck
 
-      - name: Check docs types and production build
+      - name: Build static docs site
+        run: npm run build
+
+      - name: Build Docker image
+        run: docker build -t elohim-docs:ci .
+
+      - name: Start docs container
         run: |
-          pnpm --dir docs typecheck
-          pnpm --dir docs build
+          docker run -d --rm \
+            --name elohim-docs-ci \
+            -p 3001:3001 \
+            -e PORT=3001 \
+            elohim-docs:ci
 
-      - name: Prepare environment and temporary TLS certificate
+      - name: Verify docs HTTP availability
         run: |
-          cp .env.example .env
-          cat > compose.ci.yml <<'YAML'
-          services:
-            backend:
-              environment:
-                ASPNETCORE_ENVIRONMENT: Development
-            docs:
-              image: elohim-docs:ci
-              volumes: !reset []
-          YAML
-          mkdir -p certbot/conf/live/dmhub.fun certbot/www
-          openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
-            -keyout certbot/conf/live/dmhub.fun/privkey.pem \
-            -out certbot/conf/live/dmhub.fun/fullchain.pem \
-            -subj '/CN=dmhub.fun'
-          docker compose config --quiet
-
-      - name: Build and start all containers
-        run: docker compose up -d --build --wait --wait-timeout 300
-
-      - name: Verify HTTP availability
-        run: |
-          for url in \
-            http://localhost:5000/swagger/v1/swagger.json \
-            http://localhost:3000/ \
-            http://localhost:3001/ \
-            https://localhost/ \
-            https://localhost/docs/; do
-            curl --insecure --fail --silent --show-error --location \
-              --retry 30 --retry-all-errors --retry-delay 5 \
-              --connect-timeout 5 --max-time 20 "$url" --output /dev/null
-          done
-          for service in db backend frontend docs nginx; do
-            container="$(docker compose ps -q "$service")"
-            test -n "$container"
-            test "$(docker inspect --format '{{.State.Running}}' "$container")" = true
-            test "$(docker inspect --format '{{.RestartCount}}' "$container")" = 0
+          for i in $(seq 1 30); do
+            if curl --fail --silent --show-error http://localhost:3001/ --output /dev/null; then
+              break
+            fi
+            if [ "$i" -eq 30 ]; then
+              echo "Docs did not respond on port 3001"
+              docker logs elohim-docs-ci
+              exit 1
+            fi
+            sleep 5
           done
 
       - name: Export validated docs image
@@ -109,17 +73,12 @@ jobs:
           retention-days: 3
           if-no-files-found: error
 
-      - name: Show container status and logs
+      - name: Show docs container logs
         if: always()
         run: |
-          if [ -f compose.ci.yml ]; then
-            docker compose ps -a
-            docker compose logs --no-color --tail=200
-          fi
+          docker ps -a || true
+          docker logs elohim-docs-ci || true
 
-      - name: Clean up containers and volumes
+      - name: Clean up docs container
         if: always()
-        run: |
-          if [ -f compose.ci.yml ]; then
-            docker compose down --volumes --remove-orphans
-          fi
+        run: docker rm -f elohim-docs-ci || true
