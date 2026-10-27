@@ -32,6 +32,15 @@ const sidebars: SidebarsConfig = {
 
     {
       type: 'category',
+      label: 'Informes de observación',
+      collapsed: false,
+      items: [
+        'informes/observacion-dm-hub',
+      ],
+    },
+
+    {
+      type: 'category',
       label: 'Soporte',
       collapsed: true,
       items: [
